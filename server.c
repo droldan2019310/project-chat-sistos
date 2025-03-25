@@ -2,7 +2,7 @@
 #include <string.h>
 #include <libwebsockets.h>
 #include <stdlib.h>
-#include <json-c/json.h>
+#include <json.h>
 
 // Estructura para manejar las conexiones WebSocket
 struct per_session_data__chat {
