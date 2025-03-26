@@ -4,95 +4,131 @@
 #include <libwebsockets.h>
 #include <json-c/json.h>
 
-// Espacio máximo para el mensaje, sumado al margen requerido por LWS_PRE
 #define MAX_PAYLOAD_SIZE 1024
 
-// Estructura para manejar las conexiones WebSocket por sesión
+// Estructura para la sesión del usuario
 struct per_session_data__chat {
     char *username;
+    struct lws *wsi;
 };
 
-// Callback de WebSocket
-static int
-callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
-              void *user, void *in, size_t len)
+// Lista global de conexiones activas
+#define MAX_CLIENTES 100
+static struct per_session_data__chat *clientes[MAX_CLIENTES] = { NULL };
+
+// Añadir cliente a la lista
+void registrar_cliente(struct per_session_data__chat *pss) {
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i] == NULL) {
+            clientes[i] = pss;
+            break;
+        }
+    }
+}
+
+// Remover cliente de la lista
+void eliminar_cliente(struct per_session_data__chat *pss) {
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i] == pss) {
+            clientes[i] = NULL;
+            break;
+        }
+    }
+}
+
+// Buscar cliente por nombre de usuario
+struct per_session_data__chat *buscar_destinatario(const char *nombre) {
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i] && clientes[i]->username && strcmp(clientes[i]->username, nombre) == 0) {
+            return clientes[i];
+        }
+    }
+    return NULL;
+}
+
+// Enviar JSON a un cliente
+void enviar_a_cliente(struct lws *wsi, const char *json_msg) {
+    unsigned char buffer[LWS_PRE + MAX_PAYLOAD_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+    size_t len = strlen(json_msg);
+    memcpy(&buffer[LWS_PRE], json_msg, len);
+    lws_write(wsi, &buffer[LWS_PRE], len, LWS_WRITE_TEXT);
+}
+
+// Callback principal
+static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
+                         void *user, void *in, size_t len)
 {
-    struct per_session_data__chat *pss =
-        (struct per_session_data__chat *)user;
+    struct per_session_data__chat *pss = (struct per_session_data__chat *)user;
 
     switch (reason) {
     case LWS_CALLBACK_ESTABLISHED:
         printf("Conexión establecida\n");
-        // Inicializamos el campo en NULL, por si la sesión lo usa más adelante
         pss->username = NULL;
+        pss->wsi = wsi;
+        registrar_cliente(pss);
         break;
 
     case LWS_CALLBACK_RECEIVE:
-        if (!in || len == 0) {
-            printf("Error: Datos nulos o longitud cero.\n");
-            break;
-        } else {
-            // Mostramos el mensaje recibido
-            printf("Mensaje recibido: %.*s\n", (int)len, (char *)in);
+        if (!in || len == 0) break;
 
-            // Parseamos el JSON recibido
-            struct json_object *parsed_json = json_tokener_parse((char *)in);
-            if (parsed_json) {
-                struct json_object *type_obj = NULL, *sender_obj = NULL;
+        printf("Mensaje recibido: %.*s\n", (int)len, (char *)in);
+        struct json_object *parsed = json_tokener_parse((char *)in);
+        if (!parsed) break;
 
-                // Extraemos campos "type" y "sender"
-                json_object_object_get_ex(parsed_json, "type", &type_obj);
-                json_object_object_get_ex(parsed_json, "sender", &sender_obj);
+        struct json_object *type, *sender, *content, *target;
+        json_object_object_get_ex(parsed, "type", &type);
+        json_object_object_get_ex(parsed, "sender", &sender);
+        json_object_object_get_ex(parsed, "content", &content);
+        json_object_object_get_ex(parsed, "target", &target);
 
-                // Verificamos que existan y sean cadenas
-                if (type_obj && sender_obj) {
-                    const char *type_str = json_object_get_string(type_obj);
-                    const char *sender_str = json_object_get_string(sender_obj);
+        const char *type_str = json_object_get_string(type);
+        const char *sender_str = json_object_get_string(sender);
+        const char *content_str = json_object_get_string(content);
 
-                    if (type_str && sender_str &&
-                        strcmp(type_str, "register") == 0) {
-                        // Liberar si ya está asignado
-                        if (pss->username) {
-                            free(pss->username);
-                            pss->username = NULL;
-                        }
-                        pss->username = strdup(sender_str);
-                        printf("Nuevo usuario registrado: %s\n", pss->username);
-                    }
+        if (strcmp(type_str, "register") == 0 && sender_str) {
+            if (pss->username) free(pss->username);
+            pss->username = strdup(sender_str);
+            printf("Usuario registrado: %s\n", pss->username);
+
+            const char *resp = "{\"type\": \"register_success\", \"content\": \"Registro exitoso\"}";
+            enviar_a_cliente(wsi, resp);
+        }
+        else if (strcmp(type_str, "chat") == 0 && sender_str && content_str) {
+            char broadcast[MAX_PAYLOAD_SIZE];
+            snprintf(broadcast, sizeof(broadcast),
+                     "{\"type\":\"chat\",\"sender\":\"%s\",\"content\":\"%s\"}",
+                     sender_str, content_str);
+
+            for (int i = 0; i < MAX_CLIENTES; i++) {
+                if (clientes[i] && clientes[i]->wsi != wsi) {
+                    enviar_a_cliente(clientes[i]->wsi, broadcast);
                 }
-
-                // Responder al cliente con un mensaje
-                const char *response =
-                    "{\"type\": \"register_success\", \"content\": \"Registro exitoso\"}";
-
-                // Usar un buffer con LWS_PRE para lws_write
-                unsigned char buffer[LWS_PRE + MAX_PAYLOAD_SIZE];
-                memset(buffer, 0, sizeof(buffer));
-
-                size_t resp_len = strlen(response);
-                // Copiamos la respuesta a partir de LWS_PRE
-                memcpy(&buffer[LWS_PRE], response, resp_len);
-
-                // Escribimos la respuesta usando lws_write
-                int n = lws_write(wsi, &buffer[LWS_PRE], resp_len, LWS_WRITE_TEXT);
-                if (n < (int)resp_len) {
-                    printf("Error al enviar la respuesta al cliente\n");
-                }
-
-                json_object_put(parsed_json);
-            } else {
-                printf("Error: El mensaje recibido no es JSON válido.\n");
             }
         }
+        else if (strcmp(type_str, "private") == 0 && sender_str && content_str && target) {
+            const char *target_str = json_object_get_string(target);
+            struct per_session_data__chat *dest = buscar_destinatario(target_str);
+
+            if (dest && dest->wsi) {
+                char privado[MAX_PAYLOAD_SIZE];
+                snprintf(privado, sizeof(privado),
+                         "{\"type\":\"private\",\"sender\":\"%s\",\"content\":\"%s\"}",
+                         sender_str, content_str);
+                enviar_a_cliente(dest->wsi, privado);
+            } else {
+                printf("Usuario destino no encontrado: %s\n", target_str);
+            }
+        }
+
+        json_object_put(parsed);
         break;
 
     case LWS_CALLBACK_CLOSED:
         printf("Conexión cerrada\n");
-        // Liberamos la memoria que asignamos para el username
-        if (pss->username) {
-            free(pss->username);
-            pss->username = NULL;
-        }
+        eliminar_cliente(pss);
+        if (pss->username) free(pss->username);
+        pss->username = NULL;
         break;
 
     default:
@@ -102,43 +138,37 @@ callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
+// Main
 int main(void)
 {
-    // Definimos el protocolo que manejará nuestro servidor
     struct lws_protocols protocols[] = {
         {
-            "chat_protocol",                // Nombre del protocolo
-            callback_chat,                  // Función de callback
-            sizeof(struct per_session_data__chat),  // Tamaño de la estructura por sesión
-            MAX_PAYLOAD_SIZE,              // Tamaño máximo del buffer por sesión
+            "chat_protocol",
+            callback_chat,
+            sizeof(struct per_session_data__chat),
+            MAX_PAYLOAD_SIZE,
         },
-        { NULL, NULL, 0, 0 } // Fin de la lista de protocolos
+        { NULL, NULL, 0, 0 }
     };
 
-    // Estructura de configuración del contexto
     struct lws_context_creation_info info;
     memset(&info, 0, sizeof(info));
-
-    info.port = 8080;           // Puerto en el que escuchará el servidor
-    info.protocols = protocols;  // Lista de protocolos
+    info.port = 8080;
+    info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
 
-    // Crear el contexto WebSocket
     struct lws_context *context = lws_create_context(&info);
     if (!context) {
-        fprintf(stderr, "Fallo al crear el contexto de WebSocket\n");
+        fprintf(stderr, "Fallo al crear el contexto WebSocket\n");
         return -1;
     }
 
-    // Ejecutar el servidor WebSocket
     printf("Servidor WebSocket en ejecución en el puerto 8080...\n");
     while (1) {
-        // Procesa los eventos WebSocket cada 1000ms
         lws_service(context, 1000);
     }
 
-    // Liberar el contexto cuando se termine
     lws_context_destroy(context);
     return 0;
 }
