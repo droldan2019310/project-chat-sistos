@@ -4,9 +4,11 @@
 #include <time.h>
 #include <libwebsockets.h>
 #include <json-c/json.h>
+#include <pthread.h>
 
 #define MAX_PAYLOAD_SIZE 1024
 #define MAX_CLIENTES 100
+static pthread_mutex_t clientes_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Estados posibles: "ACTIVO", "OCUPADO", "INACTIVO"
 enum estado_usuario {
@@ -38,30 +40,35 @@ static void get_timestamp(char *buf, size_t buflen) {
 // Añadir cliente a la lista
 //------------------------------------------------------------------------------
 void registrar_cliente(struct per_session_data__chat *pss) {
+    pthread_mutex_lock(&clientes_mutex);
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i] == NULL) {
             clientes[i] = pss;
             break;
         }
     }
+    pthread_mutex_unlock(&clientes_mutex);
 }
 
 //------------------------------------------------------------------------------
 // Remover cliente de la lista
 //------------------------------------------------------------------------------
 void eliminar_cliente(struct per_session_data__chat *pss) {
+    pthread_mutex_lock(&clientes_mutex);
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i] == pss) {
             clientes[i] = NULL;
             break;
         }
     }
+    pthread_mutex_unlock(&clientes_mutex);
 }
 
 //------------------------------------------------------------------------------
 // Buscar un cliente por nombre
 //------------------------------------------------------------------------------
 struct per_session_data__chat *buscar_destinatario(const char *nombre) {
+    pthread_mutex_lock(&clientes_mutex);
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i]
             && clientes[i]->username
@@ -69,6 +76,7 @@ struct per_session_data__chat *buscar_destinatario(const char *nombre) {
             return clientes[i];
         }
     }
+    pthread_mutex_unlock(&clientes_mutex);
     return NULL;
 }
 
@@ -96,11 +104,13 @@ static void enviar_a_cliente(struct lws *wsi, const char *json_msg) {
 }
 
 static void enviar_broadcast(const char *json_msg, struct lws *excluir_wsi) {
+    pthread_mutex_lock(&clientes_mutex);
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i] && clientes[i]->wsi && clientes[i]->wsi != excluir_wsi) {
             enviar_a_cliente(clientes[i]->wsi, json_msg);
         }
     }
+    pthread_mutex_unlock(&clientes_mutex);
 }
 //------------------------------------------------------------------------------
 // Callback principal
@@ -250,27 +260,33 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     json_object_new_string("list_users_response"));
                 json_object_object_add(jresp, "sender",
                     json_object_new_string("server"));
-
-                // Construir un array con {username, status}
+            
+                // Crear un array de strings con los nombres de usuario
                 struct json_object *jarr = json_object_new_array();
+            
+                pthread_mutex_lock(&clientes_mutex); // Proteger acceso a clientes[]
                 for (int i = 0; i < MAX_CLIENTES; i++) {
                     if (clientes[i] && clientes[i]->username) {
-                        struct json_object *juser = json_object_new_object();
-                        json_object_object_add(juser, "username",
+                        json_object_array_add(jarr,
                             json_object_new_string(clientes[i]->username));
-                        json_object_object_add(juser, "status",
-                            json_object_new_string(estado_to_string(clientes[i]->est)));
-                        json_object_array_add(jarr, juser);
                     }
                 }
+                pthread_mutex_unlock(&clientes_mutex);
+            
                 json_object_object_add(jresp, "content", jarr);
+            
+                // Agregar timestamp
+                char out_ts[64];
+                get_timestamp(out_ts, sizeof(out_ts));
                 json_object_object_add(jresp, "timestamp",
                     json_object_new_string(out_ts));
-
+            
+                // Enviar al cliente
                 const char *resp_str = json_object_to_json_string(jresp);
                 enviar_a_cliente(wsi, resp_str);
                 json_object_put(jresp);
             }
+            
             else if (type_str && strcmp(type_str, "user_info") == 0) {
                 // {type:"user_info", sender:"...", target:"usuario_objetivo"}
                 if (!target_str) break;
@@ -381,6 +397,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
 //------------------------------------------------------------------------------
 int main(void)
 {
+    pthread_mutex_init(&clientes_mutex, NULL);
     // Definimos el protocolo
     struct lws_protocols protocols[] = {
         {
@@ -413,6 +430,8 @@ int main(void)
     }
 
     lws_context_destroy(context);
+
+    pthread_mutex_destroy(&clientes_mutex);
     return 0;
 }
 

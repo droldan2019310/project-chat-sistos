@@ -1,5 +1,5 @@
 /******************************************************************************
- * client_thread.c
+ * client.c
  * Cliente WebSocket en C con hilo aparte para lws_service,
  * incluyendo opciones extra:
  *  - change_status (ACTIVO/OCUPADO/INACTIVO)
@@ -200,7 +200,7 @@
  
      // {type:"list_users", sender:"..."}
      snprintf(json_part, MAX_PAYLOAD_SIZE,
-              "{\"type\":\"list_users\",\"sender\":\"%s\"}", sender);
+        "{\"type\":\"list_users\",\"sender\":\"%s\",\"content\":null}", sender);
  
      size_t msg_len = strlen(json_part);
      int written = lws_write(wsi, (unsigned char *)json_part, msg_len, LWS_WRITE_TEXT);
@@ -337,32 +337,21 @@
                  }
              }
              else if (type_str && strcmp(type_str, "list_users_response") == 0) {
-                 // "users": [ {username:"...", status:"..."}, {...}, ... ]
-                 if (jusers && json_object_is_type(jusers, json_type_array)) {
-                     int arr_len = json_object_array_length(jusers);
-                     char line[256];
-                     snprintf(line, sizeof(line),
-                              "[Usuarios] Lista (%d):", arr_len);
-                     add_chat_line(line);
- 
-                     for (int i = 0; i < arr_len; i++) {
-                         struct json_object *jusr = json_object_array_get_idx(jusers, i);
-                         if (!jusr) continue;
- 
-                         // Extraer username, status
-                         struct json_object *jun, *jst;
-                         json_object_object_get_ex(jusr, "username", &jun);
-                         json_object_object_get_ex(jusr, "status", &jst);
- 
-                         const char *uname = jun ? json_object_get_string(jun) : "???";
-                         const char *ust   = jst ? json_object_get_string(jst) : "ACTIVO";
-                         char info_line[256];
-                         snprintf(info_line, sizeof(info_line),
-                                  " - %s [%s]", uname, ust);
-                         add_chat_line(info_line);
-                     }
-                 }
-             }
+                if (jcontent && json_object_is_type(jcontent, json_type_array)) {
+                    int arr_len = json_object_array_length(jcontent);
+                    char line[256];
+                    snprintf(line, sizeof(line), "[Usuarios] Lista (%d):", arr_len);
+                    add_chat_line(line);
+            
+                    for (int i = 0; i < arr_len; i++) {
+                        struct json_object *juser = json_object_array_get_idx(jcontent, i);
+                        const char *uname = juser ? json_object_get_string(juser) : "???";
+                        char user_line[256];
+                        snprintf(user_line, sizeof(user_line), " - %s", uname);
+                        add_chat_line(user_line);
+                    }
+                }
+            }
              else if (type_str && strcmp(type_str, "user_info_response") == 0) {
                  // "content": {"ip":"...", "status":"..."}, "target":"usuario"
                  struct json_object *jcont;
@@ -573,11 +562,11 @@
      // Conectarse al servidor
      struct lws_client_connect_info ccinfo = {
          .context = context,
-         .address = "3.90.61.181",   // Ajusta la IP/host de tu servidor
+         .address = "localhost",   // Ajusta la IP/host de tu servidor
          .port = 8080,
          .path = "/chat",
-         .host = "3.90.61.181",
-         .origin = "3.90.61.181",
+         .host = "localhost",
+         .origin = "localhost",
          .protocol = "chat-protocol",
          .ssl_connection = 0
      };
