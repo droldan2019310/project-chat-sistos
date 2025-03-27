@@ -291,7 +291,7 @@
              json_object_object_get_ex(parsed, "sender", &jsender);
              json_object_object_get_ex(parsed, "content", &jcontent);
              // Para list_users
-             json_object_object_get_ex(parsed, "users", &jusers);
+             json_object_object_get_ex(parsed, "content", &jusers);
              // user_info_response
              json_object_object_get_ex(parsed, "target", &jtarget);
  
