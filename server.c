@@ -325,7 +325,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     json_object_new_string(out_ts));
 
                 const char *resp_str = json_object_to_json_string(jresp);
-                enviar_a_cliente(wsi, resp_str);
+                enviar_broadcast(wsi, resp_str);
                 json_object_put(jresp);
             }
             else if (type_str && strcmp(type_str, "disconnect") == 0) {
@@ -336,7 +336,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                          "{\"type\":\"user_disconnected\",\"sender\":\"server\","
                          "\"content\":\"%s ha salido\",\"timestamp\":\"%s\"}",
                          pss->username ? pss->username : "anon", out_ts);
-                enviar_a_cliente(wsi, msg);
+                enviar_broadcast(wsi, msg);
 
                 // Eliminar al usuario
                 printf("El usuario %s se desconectó\n", pss->username);
@@ -407,4 +407,14 @@ int main(void)
 
     lws_context_destroy(context);
     return 0;
+}
+
+
+
+static void enviar_broadcast(const char *json_msg, struct lws *excluir_wsi) {
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i] && clientes[i]->wsi && clientes[i]->wsi != excluir_wsi) {
+            enviar_a_cliente(clientes[i]->wsi, json_msg);
+        }
+    }
 }
