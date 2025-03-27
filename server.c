@@ -332,7 +332,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     json_object_new_string(out_ts));
 
                 const char *resp_str = json_object_to_json_string(jresp);
-                enviar_broadcast(wsi, resp_str);
+                enviar_broadcast(resp_str,wsi);
                 json_object_put(jresp);
             }
             else if (type_str && strcmp(type_str, "disconnect") == 0) {
@@ -343,7 +343,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                          "{\"type\":\"user_disconnected\",\"sender\":\"server\","
                          "\"content\":\"%s ha salido\",\"timestamp\":\"%s\"}",
                          pss->username ? pss->username : "anon", out_ts);
-                enviar_broadcast(wsi, msg);
+                enviar_broadcast(msg,wsi);
 
                 // Eliminar al usuario
                 printf("El usuario %s se desconectó\n", pss->username);
