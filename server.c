@@ -377,7 +377,7 @@ int main(void)
     // Definimos el protocolo
     struct lws_protocols protocols[] = {
         {
-            "chat_protocol",
+            "chat-protocol",
             callback_chat,
             sizeof(struct per_session_data__chat),
             MAX_PAYLOAD_SIZE,
