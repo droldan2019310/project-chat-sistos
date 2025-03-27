@@ -562,11 +562,11 @@
      // Conectarse al servidor
      struct lws_client_connect_info ccinfo = {
          .context = context,
-         .address = "localhost",   // Ajusta la IP/host de tu servidor
-         .port = 8080,
+         .address = "18.188.99.202",   // Ajusta la IP/host de tu servidor
+         .port = 8082,
          .path = "/chat",
-         .host = "localhost",
-         .origin = "localhost",
+         .host = "18.188.99.202",
+         .origin = "18.188.99.202",
          .protocol = "chat-protocol",
          .ssl_connection = 0
      };
