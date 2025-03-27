@@ -95,6 +95,13 @@ static void enviar_a_cliente(struct lws *wsi, const char *json_msg) {
     lws_write(wsi, &buffer[LWS_PRE], len, LWS_WRITE_TEXT);
 }
 
+static void enviar_broadcast(const char *json_msg, struct lws *excluir_wsi) {
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i] && clientes[i]->wsi && clientes[i]->wsi != excluir_wsi) {
+            enviar_a_cliente(clientes[i]->wsi, json_msg);
+        }
+    }
+}
 //------------------------------------------------------------------------------
 // Callback principal
 //------------------------------------------------------------------------------
@@ -411,10 +418,4 @@ int main(void)
 
 
 
-static void enviar_broadcast(const char *json_msg, struct lws *excluir_wsi) {
-    for (int i = 0; i < MAX_CLIENTES; i++) {
-        if (clientes[i] && clientes[i]->wsi && clientes[i]->wsi != excluir_wsi) {
-            enviar_a_cliente(clientes[i]->wsi, json_msg);
-        }
-    }
-}
+
