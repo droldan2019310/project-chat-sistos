@@ -489,7 +489,11 @@
              fgetc(stdin);
              // mandar change_status
              // {type:"change_status",sender:"...",content:"ACTIVO/OCUPADO/INACTIVO"}
-             send_json_change_status(global_wsi, g_username, nuevo_est);
+                send_json_change_status(global_wsi, g_username, nuevo_est);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%s ha cambiado su estado a %s", g_username, nuevo_est);
+                send_json_message(global_wsi, "broadcast", g_username, msg);
+
              break;
          }
          case 4: {
@@ -513,7 +517,11 @@
          case 6: {
              // desconectar
              // {type:"disconnect", sender:"...", content:"Cierre de sesión"}
-             send_json_disconnect(global_wsi, g_username);
+                send_json_disconnect(global_wsi, g_username);
+                char msg[256];
+                snprintf(msg, sizeof(msg), "%s ha cerrado sesión", g_username);
+                send_json_message(global_wsi, "broadcast", g_username, msg);
+             
              break;
          }
          case 7:
@@ -542,7 +550,7 @@
  
      static struct lws_protocols protocols[] = {
          {
-             "chat_protocol",
+             "chat-protocol",
              callback_chat,
              sizeof(struct per_session_data__chat),
              MAX_PAYLOAD_SIZE
@@ -565,12 +573,12 @@
      // Conectarse al servidor
      struct lws_client_connect_info ccinfo = {
          .context = context,
-         .address = "3.90.61.181",   // Ajusta la IP/host de tu servidor
+         .address = "localhost",   // Ajusta la IP/host de tu servidor
          .port = 8080,
          .path = "/chat",
-         .host = "3.90.61.181",
-         .origin = "3.90.61.181",
-         .protocol = "chat_protocol",
+         .host = "localhost",
+         .origin = "localhost",
+         .protocol = "chat-protocol",
          .ssl_connection = 0
      };
  
