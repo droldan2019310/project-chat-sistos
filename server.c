@@ -22,6 +22,7 @@ struct per_session_data__chat {
     char ip[64];              // IP del cliente
     enum estado_usuario est;  // Estado (ACTIVO, OCUPADO, INACTIVO)
     struct lws *wsi;
+    time_t last_activity;  
 };
 
 // Lista global de conexiones
@@ -69,16 +70,21 @@ void eliminar_cliente(struct per_session_data__chat *pss) {
 //------------------------------------------------------------------------------
 struct per_session_data__chat *buscar_destinatario(const char *nombre) {
     pthread_mutex_lock(&clientes_mutex);
+    struct per_session_data__chat *found = NULL;
+
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i]
             && clientes[i]->username
             && strcmp(clientes[i]->username, nombre) == 0) {
-            return clientes[i];
+            found = clientes[i];
+            break;
         }
     }
-    pthread_mutex_unlock(&clientes_mutex);
-    return NULL;
+
+    pthread_mutex_unlock(&clientes_mutex); 
+    return found;
 }
+
 
 //------------------------------------------------------------------------------
 // Convertir enum estado_usuario a string
@@ -172,6 +178,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                 if (pss->username) free(pss->username);
                 pss->username = strdup(sender_str ? sender_str : "anon");
                 pss->est = ESTADO_ACTIVO;
+                pss->last_activity = time(NULL);  
 
                 printf("Usuario registrado: %s\n", pss->username);
 
@@ -202,7 +209,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
             else if (type_str && strcmp(type_str, "broadcast") == 0) {
                 // Mensaje general a todos
                 // {type:"broadcast", sender:"...", content:"...", timestamp:"..."}
-
+                pss->last_activity = time(NULL);
                 // Armar JSON de broadcast
                 struct json_object *jresp = json_object_new_object();
                 json_object_object_add(jresp, "type",
@@ -231,6 +238,7 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
                     // Podríamos mandar un error
                     break;
                 }
+                pss->last_activity = time(NULL);
                 struct per_session_data__chat *dest = buscar_destinatario(target_str);
                 if (dest && dest->wsi) {
                     // Armar JSON
@@ -392,6 +400,59 @@ static int callback_chat(struct lws *wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
+void* verificar_inactividad(void* arg) {
+    while (1) {
+        struct per_session_data__chat *inactivos[MAX_CLIENTES] = { NULL };
+        int count = 0;
+
+        pthread_mutex_lock(&clientes_mutex);
+        time_t ahora = time(NULL);
+
+        for (int i = 0; i < MAX_CLIENTES; i++) {
+            if (clientes[i] && clientes[i]->username) {
+                double segundos_inactivo = difftime(ahora, clientes[i]->last_activity);
+                if (clientes[i]->est != ESTADO_INACTIVO && segundos_inactivo >= 10) {
+                    clientes[i]->est = ESTADO_INACTIVO;
+                    inactivos[count++] = clientes[i];
+                }
+            }
+        }
+        pthread_mutex_unlock(&clientes_mutex);
+
+        // Ahora enviar fuera del mutex
+        for (int i = 0; i < count; i++) {
+            struct json_object *jresp = json_object_new_object();
+            json_object_object_add(jresp, "type",
+                json_object_new_string("status_update"));
+            json_object_object_add(jresp, "sender",
+                json_object_new_string("server"));
+
+            struct json_object *jcont = json_object_new_object();
+            json_object_object_add(jcont, "user",
+                json_object_new_string(inactivos[i]->username));
+            json_object_object_add(jcont, "status",
+                json_object_new_string("INACTIVO"));
+            json_object_object_add(jresp, "content", jcont);
+
+            char ts[64];
+            get_timestamp(ts, sizeof(ts));
+            json_object_object_add(jresp, "timestamp",
+                json_object_new_string(ts));
+
+            const char *msg = json_object_to_json_string(jresp);
+            enviar_broadcast(msg, NULL);  // ya fuera del mutex
+            json_object_put(jresp);
+
+            printf("[Sistema] %s marcado como INACTIVO\n", inactivos[i]->username);
+        }
+
+        sleep(10);
+    }
+    return NULL;
+}
+
+
+
 //------------------------------------------------------------------------------
 // main
 //------------------------------------------------------------------------------
@@ -423,12 +484,15 @@ int main(void)
         fprintf(stderr, "Fallo al crear el contexto WebSocket\n");
         return -1;
     }
+    pthread_t monitor_thread;
+    pthread_create(&monitor_thread, NULL, verificar_inactividad, NULL);
 
     printf("Servidor WebSocket en ejecución en el puerto 8080...\n");
     while (1) {
         lws_service(context, 1000);
     }
 
+   
     lws_context_destroy(context);
 
     pthread_mutex_destroy(&clientes_mutex);
